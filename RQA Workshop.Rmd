@@ -1,0 +1,615 @@
+---
+title: "RQA - SCIPIE 2021"
+author: "BPR"
+date: "10/11/2021"
+output: word_document
+---
+
+# Setup
+
+```{r setup, include=FALSE}
+# Notice the green triangle on the right of the line above. All lines that 
+#  begin with ```{r have that green triangle; these lines are the beginnings
+#  of code chunks. Press the green triangle to run all the code in the chunk.
+# You must run all preceding chunks to guarantee that any chunk will run.
+
+# ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ###
+#                                                                       #
+# Most of this chunk loads packages that I usually want, sets           #
+#  things to display the way I want them to, and helps with             #
+#  file management.                                                     #
+#                                                                       #
+# Many thanks to Aaron Likens, with whom this script (and its idea)     #
+#  originated.                                                          #
+#                                                                       #
+# ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ###
+
+knitr::opts_chunk$set(echo = TRUE)
+
+c(#"conflicted",       # To handle package function name conflicts
+  "crqa",             # For RQA
+#  "data.table",     # Faster data access
+#  "devtools",
+#  "dplyr",          # To wrangle data
+#  "dtplyr",         # For fast dplyr
+  "here",             # To find/store files w/o setwd() and getwd()
+  "nonlinearTseries", #
+  "readtext",         # readtext() function
+#  "SnowballC",      # For text processing
+  "spatialEco",       # local.min.max() function
+#  "stringr",        # General string functions
+#  "tidytable",      # Faster tidyr
+#  "tidyr",          # Data wrangling
+  "tm",               # Text manipulation
+  "tseriesChaos"      # Some useful functions
+) -> package_names
+
+for(package_name in package_names) {
+  if(!is.element(package_name, installed.packages()[,1])) {
+    install.packages(package_name, dependencies = TRUE)
+  }
+  library(package_name, character.only=TRUE,
+          quietly=TRUE,verbose=FALSE)
+}
+
+#install_github('aaronlikens/rqapp')
+
+rm(list=c("package_names","package_name"))
+
+set_here()      # This helps with folder structure when shifting computers
+
+set.seed(07012020)                 # Set the seed for random numbers
+
+# Stuff I prefer
+options(show.signif.stars = FALSE) # Avoid conflating p-value & effect size
+options(digits = 4)                # Round to 4 digits
+```
+
+Cleaning text is a pain. A helper function, cleanText(), is defined to make it a bit easier.
+```{r functions, include = FALSE}
+# ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ###
+#                                                                       #
+# cleanText is a little helper function to clean up the text from the   #
+#  lyrics and return a series of numbers.                               #
+#  Courtesy of Aaron Likens                                             #
+#                                                                       #
+# ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ###
+
+cleanText = function(x) {              # User-defined function
+  rawText = gsub('\\n',' ',x)          # Get rid of the new line breaks
+  rawText = gsub('\\r',' ',x)          # Get rid of any hard returns
+  ts = Corpus(VectorSource(rawText))   # Create a time series dictionary 
+                                       #  from the text.
+  ts = tm_map(ts, removePunctuation)   # Yep, remove the punctuation 
+  ts = tm_map(ts, removeNumbers)       # Remove numbers
+  ts = tm_map(ts, tolower)             # Make everything lower case
+  ts = tm_map(ts, stripWhitespace)     # Get rid of white spaces
+  ts = tm_map(ts, stemDocument)        # Reduce words to their stems
+  ts = tm_map(ts, PlainTextDocument)   # Make it all plain text
+  ts = as.character(ts[[1]])           # Get the words as a string of numbers
+  words = unlist(strsplit(ts, ' '))    # Break each number into a separate
+                                       #  entry.
+  return(words)                        # Send back the vector of word numbers
+}
+```
+
+# RQA of Text (Songs)
+Because of copyright issues, I am NOT including the data files for these songs. You'll have to create your own data files to run this. Put your data files into the "Data" folder!
+
+## Data Preparation
+First, we read in the data and clean it up. The function cleanText() does things like remove the punctuation, make everything lower case, reduce things to their stems (e.g., "reduction" and "reducing" both become "reduc"), etc.
+
+If you have rectangular data (e.g., from a spreadsheet), you can skip this part.
+```{r prepText, include = FALSE}
+# ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ###
+#                                                                       #
+# Multiple steps:                                                       #
+#  1. Read in data stored in a plain text file online.                  #
+#  2. Put that text into the proper format                              #
+#  3. Compute the RQA                                                   #
+#  4. Display the recurrence plot                                       #
+#  5. Display some statistics                                           #
+#                                                                       #
+# ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ###
+
+# Use your own file in the next line.
+readtext(here("Data/Let it Be lyrics.txt"))$text -> textIn
+
+suppressWarnings(cleanText(textIn)) -> textIn   # Clean the text
+unique(textIn) -> unique_words                  # Get a list of unique words
+
+# Derive a an ordered sequence that characterizes words in terms of their
+#  order of appearance. Duplicates retain the same number:
+as.vector(                        # Need a vector, not a list
+  sapply(textIn,                  # Apply to every word
+         function(x) {which(x == unique_words)} # Which unique word is x?
+         )) -> word_series        # Make these into a series
+```
+
+If you have a data series already, you can start here. Substitute your data series (or two data series) for "word_series" in two places in the next chunk, and adjust the other parameters as appropriate. You may also wish to rename the output from letitbe_rqa to something else.
+```{r RQA_computation}
+# compute RQA and RP
+crqa::crqa(ts1 = word_series, # Horizontal axis is word_series
+           ts2 = word_series, # Vertical axis is word_series
+           delay = 1,         # You can play with this if you want
+           embed = 1,         # This is a one-dimensional embedding
+                              #  Play with embed if you want.
+           rescale = 2,       # Rescale the maximum distance
+           radius = 0.0001,   # We're doing exact matches, but 
+                              #  setting radius = 0 is numerically
+                              #  a problem
+           normalize = 0,     # Don't normalize either axis
+           mindiagline = 2,   # Threshold to consider a diagonal as a line
+           minvertline = 2,   # Threshold to consider a vertical as a line
+           tw = 0,            # Don't use the line of incidence in
+                              # RQA calculations
+           whiteline = FALSE, # Not used; left in for legacy
+           recpt = FALSE,     # Calculate CRQA from RP or not
+           method = 'rqa',    # RQA. CRQA also possible.
+           datatype = 'categorical') ->  # Alternative: continuous
+  letitbe_rqa
+```
+
+
+```{r RQA_plot}
+# set plot parameters for the recurrence plot
+list(unit = 40,
+    labelx = "Time", 
+    labely = "Time", 
+    cols = "blue", 
+    pcex = .4, 
+    pch = 16, 
+    labax = seq(0, 
+                nrow(letitbe_rqa$RP),
+                40), 
+    labay = seq(0,
+                nrow(letitbe_rqa$RP), 
+                40), 
+    las = 1) -> plot_params
+
+plotRP(letitbe_rqa$RP, 
+       plot_params) # generate recurrence plot
+```
+In addition to information that we can gain from looking at (or comparing) recurrence plots, there are several statistics that we can calculate that are useful.
+
+## Important RQA Statistics
+There is an easy way to get various RQA statistics
+```{r RQA_statistics}
+print(letitbe_rqa[1:9])  # Print RQA statistics
+```
+FWIW: The following paragraph won't mean anything here, but if you "knit" the document, it will fill in the proper numbers in the resulting MS Word document.
+
+RR is the percentage of points that fall inside a radius (the "Recurrence Rate"); in this case, that is `letitbe_rqa$RR`. DET is the proportion of recurrent points, `letitbe_rqa$DET` forming diagonal lines. NRLINE gives the total number of lines, `letitbe_rqa$NRLINE`, in the plot. maxL is the length fo the longest line, `letitbe_rqa$` (which in this case is the LOI). L is the average length of lines, `letitbe_rqa$L`. ENTR is the Shannon entropy, `letitbe_rqa$ENTR`, found from the diagonal lines. rENTR is the entropy normalized by the number of lines, `letitbe_rqa$rENTR`. (Shannon entropy increases with an increasing number of points, and so can only be compared across plots with the same NRLINE. rENTR can be compared across all plots.) LAM is the proportion of vertical lines (here, none) and TT is the average length of those vertical lines.
+
+There are many more useful quantities to compute; see Marwan and Webber (2015) for some of those.
+
+## A second song
+Here's the full script for analysis of the second song shown in the presentation. This would be a good script to edit for doing text analysis.
+
+Assuming that the chunk starts on line 195, then your edits should be:
+
+1. File name on line 197
+2. Possibly delay and/or embed on lines 211 and 212
+3. tick_size on line 229. (Make it larger if there are too many ticks on the axis; smaller if there are too few.)
+4. You can change "revolution_rqa" everywhere it appears if you want, but that isn't necessary.
+```{r revolution}
+# Use your own file in the next line.
+readtext(here("Data/Revolution lyrics.txt"))$text -> textIn
+
+suppressWarnings(cleanText(textIn)) -> textIn   # Clean the text
+unique(textIn) -> unique_words                  # Get a list of unique words
+
+# Derive a an ordered sequence that characterizes words in terms of their
+#  order of appearance. Duplicates retain the same number:
+as.vector(                        # Need a vector, not a list
+  sapply(textIn,                  # Apply to every word
+         function(x) {which(x == unique_words)} # Which unique word is x?
+         )) -> word_series        # Make these into a series
+
+crqa::crqa(ts1 = word_series, # Horizontal axis is word_series
+           ts2 = word_series, # Vertical axis is word_series
+           delay = 1,         # You can play with this if you want
+           embed = 1,         # This is a one-dimensional embedding
+                              #  Play with embed if you want.
+           rescale = 2,       # Rescale the maximum distance
+           radius = 0.0001,   # We're doing exact matches, but 
+                              #  setting radius = 0 is numerically
+                              #  a problem
+           normalize = 0,     # Don't normalize either axis
+           mindiagline = 2,   # Threshold to consider a diagonal as a line
+           minvertline = 2,   # Threshold to consider a vertical as a line
+           tw = 0,            # Don't use the line of incidence in
+                              # RQA calculations
+           whiteline = FALSE, # Not used; left in for legacy
+           recpt = FALSE,     # Calculate CRQA from RP or not
+           method = 'rqa',    # RQA. CRQA also possible.
+           datatype = 'categorical') ->  # Alternative: continuous
+  revolution_rqa
+
+40 -> tick_size
+list(unit = tick_size,
+    labelx = "Time", 
+    labely = "Time", 
+    cols = "blue", 
+    pcex = .4, 
+    pch = 16, 
+    labax = seq(0, 
+                nrow(revolution_rqa$RP),
+                tick_size), 
+    labay = seq(0,
+                nrow(revolution_rqa$RP), 
+                tick_size), 
+    las = 1) -> plot_params
+
+plotRP(revolution_rqa$RP, 
+       plot_params) # generate recurrence plot
+
+print(revolution_rqa[1:9])  # Print RQA statistics
+```
+Comparing the two songs, note that DET is much less for _Revolution_ than for _Let It Be_, which makes sense; fewer repeats. Also, the rENTR is higher for _Revolution_ indicating a wider variety of words. This also makes sense: There are 71 unique words in the 245 words of _Revolution_ while there are only _61_ unique words in the 263 words of _Let It Be_, so each word is more surprising in _Revolution_ (raising its entropy) and DET is higher in _Let It Be_ which also reduces its entropy relative to _Revolution_.
+
+# Numerical Data
+Numerical data introduces the need to consider the question _How close is close?_. Additionally, we often _embed_ a unidimensional data stream into a higher dimensional _state space_.
+
+## Embedding Unidimensional Data
+We need to determine the appropriate delay and dimension to embed quantitative data. Let's do both of those.
+
+We'll use the Lorenz system of equations as an example. Lorenz (1963) created a weather model involving three variables.
+
+Here's a state-space picture of the model, for appropriate parameters
+```{r lorenzPlot}
+lorenz(do.plot = TRUE) -> lorenz_dat  # New window; maximize it for best view
+```
+Obviously, the Lorenz "butterfly" is made from three data streams. Suppose we only had one of the three data streams. In this case, we could use average mutual information and false nearest neighbors to determine the embedding, and look at a plot.
+```{r LorenzData}
+lorenz(do.plot = FALSE) -> lorenz_ts
+uni_d_ts = lorenz_ts$y[1:1000]              # Lorenz z-component
+plot(uni_d_ts,
+     pch = 16,
+     cex = 0.3)
+```
+Using this as a template for your own studies, note that the data stream should go into the variable uni_d_ts.
+
+First, we find the delay parameters
+```{r LorenzDelay}
+200 -> lag_max
+mutualInformation(uni_d_ts,
+                  lag.max = lag_max,
+                  do.plot = FALSE) ->
+  uni_d_ts.ami
+which(
+  uni_d_ts.ami$mutual.information ==
+    local.min.max(uni_d_ts.ami$mutual.information,
+                  plot = FALSE)$minima[1]) ->
+  tm_del
+# It turns out that acf won't help.
+acf(uni_d_ts,
+    lag.max = lag_max,
+    plot = FALSE) ->
+  uni_d_ts.acf
+min(
+  which(
+    uni_d_ts.acf$acf < 0.05))
+
+```
+
+
+```{r LorenzDimension}
+# Embedding dimension
+10 -> max.dim
+false.nearest(uni_d_ts,
+              m = max.dim,
+              d = 8,
+              t = 10) ->
+  uni_d_ts.fnn
+# Get the dimension with the smallest non-zero fraction of FNN
+which(uni_d_ts.fnn[1,] == 
+        min(uni_d_ts.fnn[1, which(uni_d_ts.fnn[1,] > 0)])) -> 
+  emb_dim
+```
+
+
+```{r embeddedLorenz}
+buildTakens(uni_d_ts, 
+            embedding.dim = emb_dim, 
+            time.lag = tm_del) ->
+  lorenz.embed
+
+rgl::plot3d(lorenz.embed[,1], 
+            lorenz.embed[,2], 
+            lorenz.embed[,3], 
+            xlab = "Lorenz y", 
+            ylab = "Lorenz y(one lag)", 
+            zlab = "Lorenz y(two lags)", 
+            cex = 3)
+```
+
+So, embedding using delayed data works out well enough. We get a (different) butterfly, but still we get the butterfly. And, if we try a shorter delay, say 8, we get back the butterfly!
+```{r betterEmbeddedLorenz}
+buildTakens(uni_d_ts, 
+            embedding.dim = emb_dim, 
+            time.lag = 8) ->
+  lorenz.embed
+
+rgl::plot3d(lorenz.embed[,1], 
+            lorenz.embed[,2], 
+            lorenz.embed[,3], 
+            xlab = "Lorenz y", 
+            ylab = "Lorenz y(one lag)", 
+            zlab = "Lorenz y(two lags)", 
+            cex = 3)
+
+```
+
+What about the RQA? Well, so far, we can only do unidimensional data streams, so let's use the reconstructed (delay = 8, dimension = 3, radius = 0.05) Lorenz data
+```{r reconstructedLorenzRQA}
+crqa::crqa(ts1 = uni_d_ts, # Horizontal axis is word_series
+           ts2 = uni_d_ts, # Vertical axis is word_series
+           delay = 8,         # You can play with this if you want
+           embed = 3,         # This is a two-dimensional embedding
+           rescale = 2, 
+           radius = 0.5,   # Can play with this (0.001, 0.003, 0.01)
+           normalize = 0,     # Don't normalize either axis
+           mindiagline = 2,
+           minvertline = 2, 
+           tw = 0,            # Don't use the line of incidence in
+                              # RQA calculations
+           whiteline = FALSE, 
+           recpt = FALSE, 
+           method = 'rqa',
+           datatype = 'continuous') -> 
+  logis_rqa
+
+# set plot parameters for the recurrence plot
+200 -> tick_size
+list(unit = tick_size,
+    labelx = "Time", 
+    labely = "Time", 
+    cols = "blue", 
+    pcex = .3, 
+    pch = 16, 
+    labax = seq(0, nrow(logis_rqa$RP), tick_size), 
+    labay = seq(0, nrow(logis_rqa$RP), tick_size), 
+    las = 1) -> plot_params
+
+plotRP(logis_rqa$RP, plot_params) # generate recurrence plot
+
+```
+This makes sense: The curves and blobs are those small, slow changes in dynamics before shifting to the other "wing" of the butterfly.
+
+## How Close is Close?
+Unlike with categorical data, where "close" is the same as "identical," numerical data often have noise so that identity can no longer be used. Hence, we need to choose a particular _radius_ to determine what difference counts as "close".
+
+The best way to do this is via _the method of judicious guessing_ (a.k.a., trial and error): Just keep trying with different radii until you get something that is useful.
+
+# Cross Recurrence Quantification Analysis
+```{r crqaData, include = FALSE}
+handmovement -> test_df
+c("A", "B", "C", "D") -> colnames(test_df)
+```
+
+CRQA allows for the comparison of two time series. (Until now, we've just been using the same series for both!) Notice that there are three parameter changes, ts1, ts2, and method.
+
+The default data comes form some handmovement data. (Type ?handmovement at the console prompt to learn more, including getting the original article.) For here, these are dominant and non-dominant hand movements of a participant.
+```{r crqa}
+crqa::crqa(ts1 = test_df$A,   # Horizontal axis is word_series
+           ts2 = test_df$B,   # Vertical axis is word_series
+           delay = 1,         # You can play with this if you want
+           embed = 1,         # This is a one-dimensional embedding
+                              #  Play with embed if you want.
+           rescale = 2,       # Rescale the maximum distance
+           radius = 0.0001,   # We're doing exact matches, but 
+                              #  setting radius = 0 is numerically
+                              #  a problem
+           normalize = 0,     # Don't normalize either axis
+           mindiagline = 2,   # Threshold to consider a diagonal as a line
+           minvertline = 2,   # Threshold to consider a vertical as a line
+           tw = 0,            # Don't use the line of incidence in
+                              # RQA calculations
+           whiteline = FALSE, # Not used; left in for legacy
+           recpt = FALSE,     # Calculate CRQA from RP or not
+           method = 'crqa',   # RQA. CRQA also possible.
+           datatype = 'continuous') ->  # Alternative: categorical
+  bivariate_rqa
+```
+Plotting and statistics proceed as before.
+```{r bivariatePlot}
+# set plot parameters for the recurrence plot
+1000 -> tick_size
+list(unit = tick_size,
+    labelx = "Time", 
+    labely = "Time", 
+    cols = "blue", 
+    pcex = .3, 
+    pch = 16, 
+    labax = seq(0, nrow(bivariate_rqa$RP), tick_size), 
+    labay = seq(0, nrow(bivariate_rqa$RP), tick_size), 
+    las = 1) -> plot_params
+
+plotRP(bivariate_rqa$RP, plot_params) # generate recurrence plot
+
+```
+
+
+Notice that CRQA allows us to identify when one data stream leads (or lags) the other, which can give some insight into causal relationships. 
+
+Additionally, although we can see these effects in RQA of numerical data as well, CRQA is where we are more likely to see fading and darkening of regions (e.g., new or dying dynamics), of diagonal lines with slopes different from 1 and curves (speeding up or slowing down of dynamics).
+
+# Your turn
+Here are some data sets for you to use if you don't have your own data. Substitute them above as appropriate:
+
+## Text
+You can work with the text of Martin Luther King's "I Have a Dream" speech:
+```{r MLKtext, include = FALSE}
+# Use your own file in the next line.
+readtext("https://raw.githubusercontent.com/barneyricca/SCIPIE2021/main/I%20Have%20a%20Dream%20text.txt")$text -> textIn
+
+suppressWarnings(cleanText(textIn)) -> textIn   # Clean the text
+unique(textIn) -> unique_words                  # Get a list of unique words
+
+# Derive a an ordered sequence that characterizes words in terms of their
+#  order of appearance. Duplicates retain the same number:
+as.vector(                        # Need a vector, not a list
+  sapply(textIn,                  # Apply to every word
+         function(x) {which(x == unique_words)} # Which unique word is x?
+         )) -> word_series        # Make these into a series
+```
+
+## Categorical Series
+Here is one day of data from Ricca, Jordan, and Bowers (2020). Run the next chunk before you begin analysis.
+```{r}
+as.vector(
+  read.table("https://raw.githubusercontent.com/barneyricca/SCIPIE2021/main/RJB.txt",
+             header = FALSE))$V1 -> small_group
+```
+Then, use small_group in the parameters ts1 and ts2
+
+## Univariate Continuous Series
+Data taken from a buoy off the east coast of Canada. Type ?wave.c44137 for more information. Run the next chunk before you begin analysis.
+```{r}
+data("wave.c44137")
+```
+Use parameters ts1 = wave.c44137 and ts2 = wave.c44137 in the crqa() function.
+
+## Bivariate Categorical Series
+Use the built-in eyemovement dataset. Parameters to use in crqa:
+
+ts1 = eyemovement$listener
+ts2 = eyemovement$narrator
+
+Type ?eyemovement at the console prompt to get more information about the dataset, including the original article.
+ 
+## Bivariate Continuous Series
+### First Bivariate Example
+Here are data derived from the federal interest rate and the inflation rate in the USA, monthly from 1954 to 2017. Run this chunk first:
+```{r}
+read.csv("https://raw.githubusercontent.com/barneyricca/SCIPIE2021/main/econ.csv", header = TRUE) -> econ_df
+```
+You can use the following parameters to look at interest and inflation:
+
+ts1 = econ_df$Interest
+ts2 = econ_df$Inflation
+Be sure to set method = 'crqa' too. 
+
+This is tricky to interpret. Because the theory is that raising interest rates reduces the inflation rate, perhaps we should look at the changes in these rates. That can be done this way:
+
+ts1 = econ_df$InterestChange
+ts2 = -econ_df$InflationChange
+
+Notice the minus sign in front of the InflationChange!
+
+# A Second Example: Logistic Map
+In case you want to see how this can all fail...An oft-studied system is one defined by the _logistic map_ (May, 1978). This system is a good one to work here with because it can show both the power and pitfalls of embedding. The logistic map is defined (hover your mouse over the next stuff to see the equation, or look in the _knitted_ document):
+\[
+x_{n+1} = Rx_n(1-x_n)
+\]
+where _R_ is some parameter between 0 and 4.
+
+We can use this map to create some data. You don't have to understand the data creation process; it just works.
+```{r createLogisticData, include = FALSE}
+rep(0, 2000) -> logis
+0.7 -> logis[1]
+3.9999 -> R
+for(i in 1:1999) {
+  R * logis[i] * (1 - logis[i]) -> logis[i+1]
+}
+```
+
+Let's plot the beginning of these data
+```{r plotLogisticSeries}
+800 -> numPts
+plot(1:numPts, logis[1:numPts],
+     pch = 16,
+     cex = 0.5,
+     xlab = "Time Index",
+     ylab = "Value")
+```
+The plot looks rather random. However, we can embed these data in a space of two dimensions by plotting a point of the series against the previous point in the series. (I know to do this because I created the data in the first place!)
+```{r plotLogisticState}
+logis[-1] -> logis_p_1
+logis[-length(logis)] -> logis
+plot(logis[1:numPts], logis_p_1[1:numPts],
+     pch = 16,
+     cex = 0.5,
+     ylab = expression(x[n+1]),
+     xlab = expression(x[n]))
+```
+Much more useful. (Note: This still isn't a state-space plot, but don't worry about those details.)
+
+Suppose we only had the data, but we didn't know where they came from. In that case, we could determine an appropriate delay - I used 1 in this example - and the number of dimensions - I used 2 in this example - using some results from Takens et al. It goes sort of like this:
+```{r logisticDelay}
+# logis is the data stream. You should change logis (one occurrence) and
+#  logis.ami (three occurrences) to correspond to your data.
+50 -> max.lag
+mutualInformation(logis,
+                  lag.max = max.lag,
+                  do.plot = FALSE) ->
+  logis.ami
+which(
+  logis.ami$mutual.information ==
+    local.min.max(logis.ami$mutual.information,
+                  plot = FALSE)$minima[1])
+```
+8!?!?!
+Well, this procedure only gives an _upper bound_ on the delay, and not the optimal delay. So, yes. Eight.
+
+What about using the autocorrelation function?
+```{r logisticDelayACF}
+acf(logis,
+    plot = FALSE) -> logis_acf
+min(
+  which(
+    logis_acf$acf[,1,1] < 0.05)) - 1  # Because acf() starts with a lag of 0.
+```
+Here we get a delay of 1. (The acf() output starts with a lag of 0, so the 2nd element is for a lag of 1.) Whew!
+
+The moral: Sometimes autocorrelation, sometimes mutual information. And sometimes both are useless.
+
+What about the dimension? Typically, this is done via reducing the number of false nearest neighbors to an acceptable fraction; 10% is a common value.
+```{r logisticDimension}
+10 -> max.dim
+false.nearest(logis,
+              m = max.dim,
+              d = 1,
+              t = 10) ->
+  logis.fnn
+plot(logis.fnn)
+```
+Well, with a delay of 1, the fraction of false nearest neighbors never gets below 10%. Still, this looks like an embedding dimension of 4 is about as good as it gets. Searching through the possible delays from 1 to 8 yields an embedding dimension of 7 for a delay of 3 as the best that we can accomplish with this approach. Remember, the "true" answer is a delay of 1 and an embedding dimension of 2. The moral: Both embedding and delay should be taken as _upper bounds_ to the true values; you may have to do some searching even after these calculations.
+
+Fortunately, the logistic map is one of the more extreme examples for which this approach is only marginally helpful.
+
+```{r continuousRQA}
+# compute RQA and RP
+crqa::crqa(ts1 = logis, # Horizontal axis is word_series
+           ts2 = logis, # Vertical axis is word_series
+           delay = 1,         # You can play with this if you want
+           embed = 2,         # This is a two-dimensional embedding
+           rescale = 2, 
+           radius = 0.0001,   # Can play with this (0.001, 0.003, 0.01)
+           normalize = 0,     # Don't normalize either axis
+           mindiagline = 2,
+           minvertline = 2, 
+           tw = 0,            # Don't use the line of incidence in
+                              # RQA calculations
+           whiteline = FALSE, 
+           recpt = FALSE, 
+           method = 'rqa',
+           datatype = 'continuous') -> 
+  logis_rqa
+
+# set plot parameters for the recurrence plot
+200 -> tick_size
+list(unit = tick_size,
+    labelx = "Time", 
+    labely = "Time", 
+    cols = "blue", 
+    pcex = .3, 
+    pch = 16, 
+    labax = seq(0, nrow(logis_rqa$RP), tick_size), 
+    labay = seq(0, nrow(logis_rqa$RP), tick_size), 
+    las = 1) -> plot_params
+
+plotRP(logis_rqa$RP, plot_params) # generate recurrence plot
+```
+Wow, this looks really random! 
